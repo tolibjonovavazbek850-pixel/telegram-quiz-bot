@@ -12,10 +12,7 @@ GROUP_ID = -1001234567890
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Excel fayl yuboring (.xlsx).\n"
-        "1-ustun: Savol\n"
-        "2-ustun: To'g'ri javob\n"
-        "Qolgan ustunlar: Noto'g'ri javoblar"
+        f"Chat ID: {update.effective_chat.id}"
     )
 
 
