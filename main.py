@@ -6,13 +6,15 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# BU YERGA GURUH ID YOZILADI
-GROUP_ID = -1001234567890
+GROUP_ID = -1003952306202
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"Chat ID: {update.effective_chat.id}"
+        "Excel fayl yuboring (.xlsx).\n"
+        "1-ustun: Savol\n"
+        "2-ustun: To'g'ri javob\n"
+        "Qolgan ustunlar: Noto'g'ri javoblar"
     )
 
 
