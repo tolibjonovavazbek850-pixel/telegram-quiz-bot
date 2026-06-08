@@ -39,13 +39,18 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for index, row in df.iterrows():
 
-            try:
-                question = str(row.iloc[0]).strip()
-                correct = str(row.iloc[1]).strip()
+    try:
+        question = str(row.iloc[0]).strip()
+        correct = str(row.iloc[1]).strip()
 
-                if question == "" or correct == "":
-                    skipped += 1
-                    continue
+        if (
+            question == ""
+            or correct == ""
+            or question.lower() == "nan"
+            or correct.lower() == "nan"
+        ):
+            skipped += 1
+            continue
 
                 options = []
 
