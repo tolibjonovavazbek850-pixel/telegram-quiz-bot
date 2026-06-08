@@ -39,10 +39,21 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pd.notna(cell):
                 options.append(str(cell).strip())
 
-        options = list(dict.fromkeys(options))
+options = list(dict.fromkeys(options))
 
-        if len(options) < 2:
-            continue
+# 10 tadan ortiq variant bo'lsa kesib tashlaymiz
+options = options[:10]
+
+# Kamida 2 ta variant bo'lishi kerak
+if len(options) < 2:
+    print(f"O'tkazib yuborildi: {question}")
+    continue
+
+# To'g'ri javob yo'qolib qolgan bo'lsa
+if correct not in options:
+    options.insert(0, correct)
+
+options = options[:10]
 
         random.shuffle(options)
 
