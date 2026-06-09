@@ -2,6 +2,8 @@ import os
 import random
 import asyncio
 import pandas as pd
+import sqlite3
+
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,16 +18,32 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Global quiz holati
-quiz_state = {
-    "active": False,
-    "questions": [],
-    "current_index": 0,
-    "current_msg_id": None,
-    "correct_index": None,
-    "scores": {},
-    "start_time": None,
-    "task": None,
-    "chat_id": None,  # dinamik chat_id
+def init_db():
+    conn = sqlite3.connect("quiz.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        test_id INTEGER,
+        question TEXT,
+        correct TEXT,
+        wrong1 TEXT,
+        wrong2 TEXT,
+        wrong3 TEXT
+    )
+    """)
+
+    conn.commit()
+    conn.close()
 }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -379,6 +397,7 @@ async def results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 def main():
+    init_db()
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
