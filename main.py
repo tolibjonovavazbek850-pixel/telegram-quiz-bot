@@ -14,7 +14,6 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID", "-1003952306202"))
 
 # Global quiz holati
 quiz_state = {
@@ -23,12 +22,12 @@ quiz_state = {
     "current_index": 0,
     "current_msg_id": None,
     "correct_index": None,
-    "scores": {},       # user_id -> {name, correct, total, wrong_list, answered}
+    "scores": {},
     "start_time": None,
     "task": None,
+    "chat_id": None,  # dinamik chat_id
 }
 
-# ═══════════════════════════════════════════════
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📎 Excel fayl yuboring (.xlsx)\n\n"
@@ -36,10 +35,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 1-ustun: Savol\n"
         "• 2-ustun: To'g'ri javob\n"
         "• 3-5-ustun: Noto'g'ri javoblar\n\n"
-        "Yuklangandan so'ng /start_quiz buyrug'ini yuboring."
+        "Yuklangandan so'ng guruhda /start_quiz buyrug'ini yuboring."
     )
 
-# ═══════════════════════════════════════════════
 async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file = await update.message.document.get_file()
@@ -81,22 +79,20 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"Savolda xato: {e}")
 
         if not questions:
-            await update.message.reply_text("❌ Savollar topilmadi. Excel formatini tekshiring.")
+            await update.message.reply_text("❌ Savollar topilmadi.")
             return
 
         context.bot_data["questions"] = questions
         await update.message.reply_text(
             f"✅ *{len(questions)} ta savol yuklandi!*\n\n"
-            f"▶️ Testni boshlash uchun /start\\_quiz yuboring.",
+            f"▶️ Guruhda /start\\_quiz yuboring.",
             parse_mode="Markdown"
         )
 
     except Exception as e:
         await update.message.reply_text(f"❌ Xato: {e}")
 
-# ═══════════════════════════════════════════════
 def make_keyboard(options, question_idx):
-    """Inline tugmalar — A, B, C, D shaklida"""
     labels = ["A", "B", "C", "D"]
     keyboard = []
     for i, opt in enumerate(options):
@@ -107,9 +103,11 @@ def make_keyboard(options, question_idx):
         )])
     return InlineKeyboardMarkup(keyboard)
 
-# ═══════════════════════════════════════════════
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
+
+    # chat_id ni xabar kelgan joydan olamiz
+    chat_id = update.effective_chat.id
 
     if quiz_state["active"]:
         await update.message.reply_text("⚠️ Test allaqachon boshlangan!")
@@ -133,10 +131,11 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "scores": {},
         "start_time": datetime.now(),
         "task": None,
+        "chat_id": chat_id,
     })
 
     await context.bot.send_message(
-        chat_id=GROUP_ID,
+        chat_id=chat_id,
         text=(
             f"🎯 *TEST BOSHLANMOQDA!*\n\n"
             f"📊 Savollar: *{len(questions)} ta*\n"
@@ -151,11 +150,11 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task = asyncio.create_task(run_quiz_loop(context))
     quiz_state["task"] = task
 
-# ═══════════════════════════════════════════════
 async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
     questions = quiz_state["questions"]
+    chat_id = quiz_state["chat_id"]
 
     for idx in range(len(questions)):
         if not quiz_state["active"]:
@@ -164,7 +163,6 @@ async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
         quiz_state["current_index"] = idx
         quiz_state["correct_index"] = questions[idx]["correct_index"]
 
-        # Har savol boshida answered foydalanuvchilarni tozalash
         for uid in quiz_state["scores"]:
             quiz_state["scores"][uid]["answered"] = False
 
@@ -172,7 +170,6 @@ async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
         progress = f"[{idx + 1}/{len(questions)}]"
         labels = ["A", "B", "C", "D"]
 
-        # Savol matni
         options_text = "\n".join([
             f"{labels[i]}) {opt}" for i, opt in enumerate(q['options'])
         ])
@@ -187,25 +184,24 @@ async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
 
         try:
             msg = await context.bot.send_message(
-                chat_id=GROUP_ID,
+                chat_id=chat_id,
                 text=text,
                 parse_mode="Markdown",
                 reply_markup=make_keyboard(q["options"], idx)
             )
             quiz_state["current_msg_id"] = msg.message_id
+            print(f"Savol yuborildi [{idx+1}], chat_id: {chat_id}, msg_id: {msg.message_id}")
 
         except Exception as e:
             print(f"Xabar yuborishda xato [{idx+1}]: {e}")
             await asyncio.sleep(2)
             continue
 
-        # 30 soniya kutish
         try:
             await asyncio.sleep(30)
         except asyncio.CancelledError:
             return
 
-        # Vaqt tugadi — to'g'ri javobni ko'rsatish
         if quiz_state["active"]:
             correct_i = q["correct_index"]
             correct_label = labels[correct_i] if correct_i < len(labels) else str(correct_i+1)
@@ -213,7 +209,7 @@ async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
 
             try:
                 await context.bot.edit_message_text(
-                    chat_id=GROUP_ID,
+                    chat_id=chat_id,
                     message_id=quiz_state["current_msg_id"],
                     text=(
                         f"📝 *{progress} SAVOL* ✅\n"
@@ -223,35 +219,33 @@ async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
                     ),
                     parse_mode="Markdown"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Edit xatosi: {e}")
 
             await asyncio.sleep(2)
 
-    # Hamma savol tugadi
     if quiz_state["active"]:
         await finish_quiz(context)
 
-# ═══════════════════════════════════════════════
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
     query = update.callback_query
-    await query.answer()
+    print(f"Callback keldi: {query.data}, user: {query.from_user.full_name}")
 
     if not quiz_state["active"]:
         await query.answer("⚠️ Test faol emas!", show_alert=True)
         return
 
-    data = query.data  # ans_{question_idx}_{option_idx}
+    data = query.data
     parts = data.split("_")
     if len(parts) != 3:
+        await query.answer()
         return
 
     q_idx = int(parts[1])
     chosen = int(parts[2])
 
-    # Faqat joriy savolga javob qabul qilish
     if q_idx != quiz_state["current_index"]:
         await query.answer("⏰ Bu savol vaqti o'tdi!", show_alert=True)
         return
@@ -260,7 +254,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     user_name = user.full_name or user.username or f"Foydalanuvchi{user_id}"
 
-    # Allaqachon javob berganmi?
     if user_id in quiz_state["scores"] and quiz_state["scores"][user_id].get("answered"):
         await query.answer("✋ Siz allaqachon javob berdingiz!", show_alert=True)
         return
@@ -288,27 +281,27 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         quiz_state["scores"][user_id]["wrong_list"].append(q_idx + 1)
         await query.answer(f"❌ Noto'g'ri! {chosen_label} variant", show_alert=False)
 
-# ═══════════════════════════════════════════════
 async def finish_quiz(context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
     quiz_state["active"] = False
     scores = quiz_state["scores"]
     total_q = len(quiz_state["questions"])
+    chat_id = quiz_state["chat_id"]
 
     elapsed = datetime.now() - quiz_state["start_time"]
     m, s = divmod(int(elapsed.total_seconds()), 60)
     elapsed_str = f"{m} daqiqa {s} soniya"
 
     await context.bot.send_message(
-        chat_id=GROUP_ID,
+        chat_id=chat_id,
         text="⏹ *Test yakunlandi! Natijalar hisoblanmoqda...*",
         parse_mode="Markdown"
     )
     await asyncio.sleep(2)
 
     if not scores:
-        await context.bot.send_message(chat_id=GROUP_ID, text="📭 Hech kim qatnashmadi.")
+        await context.bot.send_message(chat_id=chat_id, text="📭 Hech kim qatnashmadi.")
         return
 
     sorted_scores = sorted(scores.values(), key=lambda x: x["correct"], reverse=True)
@@ -346,9 +339,8 @@ async def finish_quiz(context: ContextTypes.DEFAULT_TYPE):
         f"🏆 *G'OLIB: {winner['name']}* — {winner['correct']}/{total_q} ({winner_pct}%) 🎉"
     )
 
-    await context.bot.send_message(chat_id=GROUP_ID, text=text, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
 
-# ═══════════════════════════════════════════════
 async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
@@ -363,7 +355,6 @@ async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏹ Test to'xtatilmoqda...")
     await finish_quiz(context)
 
-# ═══════════════════════════════════════════════
 async def results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
@@ -387,7 +378,6 @@ async def results(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
-# ═══════════════════════════════════════════════
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -399,7 +389,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
 
     print("Bot ishga tushdi...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
