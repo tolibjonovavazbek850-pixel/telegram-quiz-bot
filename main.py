@@ -27,6 +27,7 @@ quiz_state = {
     "start_time": None,
     "task": None,
     "chat_id": None,
+}
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS tests (
