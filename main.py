@@ -14,20 +14,21 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = -1003952306202
+GROUP_ID = int(os.getenv("GROUP_ID", "-1003952306202"))
 
-# Faol quiz holati
+# Global quiz holati
 quiz_state = {
     "active": False,
     "questions": [],
     "current_index": 0,
     "current_poll_id": None,
     "correct_index": None,
-    "scores": {},        # user_id -> {name, correct, total}
+    "scores": {},
     "start_time": None,
+    "task": None,  # asyncio task — stop uchun
 }
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📎 Excel fayl yuboring (.xlsx)\n\n"
@@ -38,11 +39,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Yuklangandan so'ng /start_quiz buyrug'ini yuboring."
     )
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file = await update.message.document.get_file()
-        path = "questions.xlsx"
+        path = "/tmp/questions.xlsx"
         await file.download_to_drive(path)
 
         df = pd.read_excel(path)
@@ -56,7 +57,6 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not question or not correct or question.lower() == "nan" or correct.lower() == "nan":
                     continue
 
-                # Noto'g'ri javoblarni yig'ish (3-5 ustunlar)
                 wrong = []
                 for cell in row.iloc[2:5]:
                     if pd.notna(cell):
@@ -67,7 +67,6 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not wrong:
                     continue
 
-                # Variantlarni aralashtirish
                 options = wrong[:3] + [correct]
                 random.shuffle(options)
                 correct_index = options.index(correct)
@@ -85,9 +84,7 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Savollar topilmadi. Excel formatini tekshiring.")
             return
 
-        # Savollarni xotiraga saqlash
         context.bot_data["questions"] = questions
-
         await update.message.reply_text(
             f"✅ *{len(questions)} ta savol yuklandi!*\n\n"
             f"▶️ Testni boshlash uchun /start\\_quiz yuboring.",
@@ -97,7 +94,7 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Xato: {e}")
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
@@ -110,11 +107,11 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Avval Excel fayl yuboring!")
         return
 
-    total_time = len(questions) * 30
-    m, s = divmod(total_time, 60)
+    total_sec = len(questions) * 30
+    m, s = divmod(total_sec, 60)
     time_str = f"{m} daqiqa {s} soniya" if m else f"{s} soniya"
 
-    quiz_state = {
+    quiz_state.update({
         "active": True,
         "questions": questions,
         "current_index": 0,
@@ -122,7 +119,8 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "correct_index": None,
         "scores": {},
         "start_time": datetime.now(),
-    }
+        "task": None,
+    })
 
     await context.bot.send_message(
         chat_id=GROUP_ID,
@@ -137,56 +135,61 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await asyncio.sleep(3)
-    await send_next_question(context)
 
-# ─────────────────────────────────────────
-async def send_next_question(context: ContextTypes.DEFAULT_TYPE):
+    # Task sifatida ishga tushirish — stop uchun bekor qilish mumkin
+    task = asyncio.create_task(run_quiz_loop(context))
+    quiz_state["task"] = task
+
+# ═══════════════════════════════════════════════
+async def run_quiz_loop(context: ContextTypes.DEFAULT_TYPE):
+    """Savollarni birin-ketin yuboruvchi asosiy loop"""
     global quiz_state
 
-    if not quiz_state["active"]:
-        return
-
-    idx = quiz_state["current_index"]
     questions = quiz_state["questions"]
 
-    if idx >= len(questions):
+    for idx in range(len(questions)):
+        if not quiz_state["active"]:
+            return  # stop_quiz chaqirilgan
+
+        quiz_state["current_index"] = idx
+        q = questions[idx]
+        progress = f"[{idx + 1}/{len(questions)}]"
+
+        try:
+            msg = await context.bot.send_poll(
+                chat_id=GROUP_ID,
+                question=f"{progress} {q['question']}",
+                options=q["options"],
+                type="quiz",
+                correct_option_id=q["correct_index"],
+                is_anonymous=False,
+                open_period=30,
+            )
+            quiz_state["current_poll_id"] = msg.poll.id
+            quiz_state["correct_index"] = q["correct_index"]
+
+        except Exception as e:
+            print(f"Poll xatosi [{idx+1}]: {e}")
+            await asyncio.sleep(2)
+            continue
+
+        # 32 soniya kutish (30s poll + 2s oraliq)
+        try:
+            await asyncio.sleep(32)
+        except asyncio.CancelledError:
+            return  # stop_quiz dan cancel keldi
+
+    # Hamma savol tugadi
+    if quiz_state["active"]:
         await finish_quiz(context)
-        return
 
-    q = questions[idx]
-    progress = f"[{idx + 1}/{len(questions)}]"
-
-    try:
-        msg = await context.bot.send_poll(
-            chat_id=GROUP_ID,
-            question=f"{progress} {q['question']}",
-            options=q["options"],
-            type="quiz",
-            correct_option_id=q["correct_index"],
-            is_anonymous=False,
-            open_period=30,
-        )
-        quiz_state["current_poll_id"] = msg.poll.id
-        quiz_state["correct_index"] = q["correct_index"]
-
-    except Exception as e:
-        print(f"Poll yuborishda xato: {e}")
-        quiz_state["current_index"] += 1
-        await send_next_question(context)
-        return
-
-    # 31 soniya kutib keyingi savolga o'tish
-    await asyncio.sleep(31)
-
-    if quiz_state["active"] and quiz_state["current_index"] == idx:
-        quiz_state["current_index"] += 1
-        await send_next_question(context)
-
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
     answer = update.poll_answer
+    if not quiz_state["active"]:
+        return
     if answer.poll_id != quiz_state.get("current_poll_id"):
         return
     if not answer.option_ids:
@@ -194,7 +197,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user = answer.user
     user_id = user.id
-    user_name = user.full_name or user.username or f"User{user_id}"
+    user_name = user.full_name or user.username or f"Foydalanuvchi{user_id}"
     chosen = answer.option_ids[0]
     is_correct = (chosen == quiz_state["correct_index"])
 
@@ -210,10 +213,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_correct:
         quiz_state["scores"][user_id]["correct"] += 1
     else:
-        q_num = quiz_state["current_index"] + 1
-        quiz_state["scores"][user_id]["wrong_list"].append(q_num)
+        quiz_state["scores"][user_id]["wrong_list"].append(quiz_state["current_index"] + 1)
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 async def finish_quiz(context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
 
@@ -233,34 +235,28 @@ async def finish_quiz(context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(2)
 
     if not scores:
-        await context.bot.send_message(
-            chat_id=GROUP_ID,
-            text="📭 Hech kim qatnashmadi.",
-        )
+        await context.bot.send_message(chat_id=GROUP_ID, text="📭 Hech kim qatnashmadi.")
         return
 
     sorted_scores = sorted(scores.values(), key=lambda x: x["correct"], reverse=True)
     medals = ["🥇", "🥈", "🥉"]
 
-    # Reyting
     reyting = []
-    for i, s in enumerate(sorted_scores):
+    for i, sc in enumerate(sorted_scores):
         medal = medals[i] if i < 3 else f"{i+1}."
-        pct = round(s["correct"] / total_q * 100)
-        reyting.append(f"{medal} *{s['name']}*: {s['correct']}/{total_q} ({pct}%)")
+        pct = round(sc["correct"] / total_q * 100)
+        reyting.append(f"{medal} *{sc['name']}*: {sc['correct']}/{total_q} ({pct}%)")
 
-    # Xato tahlil
     tahlil = []
-    for s in sorted_scores:
-        wrong = s.get("wrong_list", [])
+    for sc in sorted_scores:
+        wrong = sc.get("wrong_list", [])
         if wrong:
-            w_str = ", ".join(map(str, wrong[:10]))
-            if len(wrong) > 10:
-                w_str += f" +{len(wrong)-10} ta"
-            tahlil.append(f"• *{s['name']}*: {w_str}-savollar noto'g'ri")
+            w_str = ", ".join(map(str, wrong[:15]))
+            if len(wrong) > 15:
+                w_str += f" +{len(wrong)-15} ta"
+            tahlil.append(f"• *{sc['name']}*: {w_str}-savollar")
 
     tahlil_text = "\n".join(tahlil) if tahlil else "Hamma to'g'ri javob berdi! 🎉"
-
     winner = sorted_scores[0]
     winner_pct = round(winner["correct"] / total_q * 100)
 
@@ -272,44 +268,54 @@ async def finish_quiz(context: ContextTypes.DEFAULT_TYPE):
         f"👥 Qatnashchilar: *{len(scores)} kishi*\n\n"
         f"🎖 *REYTING:*\n" + "\n".join(reyting) + "\n\n"
         f"{'━' * 28}\n"
-        f"📝 *XATO SAVOLLAR TAHLILI:*\n{tahlil_text}\n\n"
+        f"📝 *NOTO'G'RI JAVOBLAR:*\n{tahlil_text}\n\n"
         f"{'━' * 28}\n"
         f"🏆 *G'OLIB: {winner['name']}* — {winner['correct']}/{total_q} ({winner_pct}%) 🎉"
     )
 
-    await context.bot.send_message(
-        chat_id=GROUP_ID,
-        text=text,
-        parse_mode="Markdown"
-    )
+    await context.bot.send_message(chat_id=GROUP_ID, text=text, parse_mode="Markdown")
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
+
     if not quiz_state["active"]:
         await update.message.reply_text("⚠️ Hozir faol test yo'q.")
         return
+
+    # Asyncio taskni bekor qilish
+    task = quiz_state.get("task")
+    if task and not task.done():
+        task.cancel()
+
     await update.message.reply_text("⏹ Test to'xtatilmoqda...")
     await finish_quiz(context)
 
+# ═══════════════════════════════════════════════
 async def results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global quiz_state
-    if not quiz_state["active"] or not quiz_state["scores"]:
-        await update.message.reply_text("📭 Hozir natija yo'q.")
+
+    if not quiz_state["active"]:
+        await update.message.reply_text("📭 Hozir faol test yo'q.")
         return
 
     scores = quiz_state["scores"]
+    if not scores:
+        await update.message.reply_text("📊 Hali hech kim javob bermadi.")
+        return
+
     total_q = len(quiz_state["questions"])
-    idx = quiz_state["current_index"]
+    idx = quiz_state["current_index"] + 1
     sorted_scores = sorted(scores.values(), key=lambda x: x["correct"], reverse=True)
 
     lines = [f"📊 *Joriy natijalar ({idx}/{total_q} savol):*\n"]
-    for i, s in enumerate(sorted_scores):
-        lines.append(f"{i+1}. *{s['name']}*: {s['correct']} to'g'ri")
+    for i, sc in enumerate(sorted_scores):
+        pct = round(sc["correct"] / idx * 100) if idx else 0
+        lines.append(f"{i+1}. *{sc['name']}*: {sc['correct']} to'g'ri ({pct}%)")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
