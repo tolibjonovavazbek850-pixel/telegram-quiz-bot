@@ -17,10 +17,16 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Global quiz holati
-def init_db():
-    conn = sqlite3.connect("quiz.db")
-    cur = conn.cursor()
+quiz_state = {
+    "active": False,
+    "questions": [],
+    "current_index": 0,
+    "current_msg_id": None,
+    "correct_index": None,
+    "scores": {},
+    "start_time": None,
+    "task": None,
+    "chat_id": None,
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS tests (
