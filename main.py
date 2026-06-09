@@ -55,20 +55,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS questions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        test_id INTEGER,
-        question TEXT,
-        correct TEXT,
-        wrong1 TEXT,
-        wrong2 TEXT,
-        wrong3 TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
