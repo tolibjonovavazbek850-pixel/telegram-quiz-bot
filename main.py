@@ -29,20 +29,6 @@ quiz_state = {
     "chat_id": None,
 }
 
-   BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-quiz_state = {
-    "active": False,
-    "questions": [],
-    "current_index": 0,
-    "current_msg_id": None,
-    "correct_index": None,
-    "scores": {},
-    "start_time": None,
-    "task": None,
-    "chat_id": None,
-}
-
 def init_db():
     conn = sqlite3.connect("quiz.db")
     cur = conn.cursor()
@@ -55,6 +41,20 @@ def init_db():
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        test_id INTEGER,
+        question TEXT,
+        correct TEXT,
+        wrong1 TEXT,
+        wrong2 TEXT,
+        wrong3 TEXT
+    )
+    """)
+
+    conn.commit()
+    conn.close()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS questions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
